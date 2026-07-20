@@ -1,124 +1,112 @@
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultArticle, InputTextMessageContent
+import logging
+import re
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.error import TelegramError
 
-API_TOKEN = '8902067749:AAG1_xIylE24VaLq6GiDA7CrESWKKfRt4lU'
-CHANNEL_USERNAME = '@DAVMTGR' 
-CHANNEL_LINK = 'https://t.me/DAVMTGR' 
+# إعداد التسجيل للأخطاء
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-bot = telebot.TeleBot(API_TOKEN)
+# ==========================================
+# ⚙️ إعدادات المطور (قم بتعديلها من هنا)
+# ==========================================
+TOKEN = "8598589369:AAHVOMO2AfeHxpfQn_1PgtH1l4hKASlCGzs"          # توكين البوت من BotFather
 
-# 1. دالة التحقق من الاشتراك الإجباري في قناتك
-def check_subscription(user_id):
-    try:
-        member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        if member.status in ['left', 'kicked']:
-            return False
+# ميزة الاشتراك الإجباري (اجعلها True لتفعيلها، أو False لإلغائها)
+ENABLE_FORCE_SUB = True                    
+
+# بيانات القناة (تُستخدم فقط عند تفعيل ENABLE_FORCE_SUB = True)
+CHANNEL_USERNAME = "@YourChannel"          # معرف قناتك (مع @)
+CHANNEL_URL = "https://t.me/YourChannel"     # رابط قناتك
+# ==========================================
+
+# دالة كشف الحسابات المشبوهة/الوهمية (الرشق)
+def is_suspicious_user(user) -> tuple[bool, str]:
+    if not user.username:
+        return True, "لا يوجد معرف (@username)"
+    
+    if re.search(r'\d{5,}$', user.username):
+        return True, "المعرف يحتوي على أرقام عشوائية كثيرة"
+
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    if len(full_name) < 2:
+        return True, "الاسم قصير جداً"
+        
+    return False, "حساب طبيعي"
+
+# دالة التحقق من الاشتراك في القناة
+async def is_user_subscribed(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    # إذا كانت الميزة معطلة من إعدادات المطور، اعتبر المستخدم مشتركون تلقائياً
+    if not ENABLE_FORCE_SUB:
         return True
-    except Exception as e:
+
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        if member.status in ['member', 'administrator', 'creator']:
+            return True
+        return False
+    except TelegramError:
+        # في حال وجود خطأ في الوصول للقناة (مثلاً البوت ليس مشرفاً)
         return False
 
-# 2. استقبال الأوامر والرسائل العادية
-@bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    user_id = message.from_user.id
+# أمر البداية /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     
-    # التحقق من الاشتراك الإجباري أولاً
-    if not check_subscription(user_id):
-        error_text = (
-            "- عذرا عزيزي 🚸 .\n"
-            "- عليك الاشتراك بقناة البوت لتتمكن من استخدامه 🟩\n\n"
-            f"- {CHANNEL_LINK}\n\n"
-            "‼️ | اشترك ثم ارسل /start"
-        )
-        bot.reply_to(message, error_text, disable_web_page_preview=False)
-        return
-
-    # إذا أرسل /start أو دخل البوت بنجاح تظهر له لوحة التحكم المذكورة في الصورة
-    if message.text.startswith('/start'):
-        welcome_text = (
-            "بوت إنشاء التصويت الذكي | V2.2.4 ⚡️\n\n"
-            "مرحباً بك في لوحة التحكم. يمكنك الآن:\n\n"
-            "✅ إنشاء تصويت: تصميم منشورات تفاعلية احترافية.\n\n"
-            "✅ قفل القناة: تفعيل ميزة الاشتراك الإجباري للمتابعين.\n\n"
-            "✅ تخصيص كامل: تحكم في مظهر وأيقونات التفاعل.\n\n"
-            "استخدم الأزرار أدناه للتحكم في البوت 👇"
-        )
-        
-        # تصميم الأزرار الشفافة كما في الصورة تماماً
-        markup = InlineKeyboardMarkup(row_width=2)
-        
-        btn_create = InlineKeyboardButton(text="📊 إنشاء تصويت جديد", callback_data="create_vote")
-        btn_interact = InlineKeyboardButton(text="⚪️ زر التفاعل", callback_data="btn_interact")
-        btn_sub = InlineKeyboardButton(text="📢 الاشتراك الإجباري", callback_data="btn_sub")
-        btn_admin = InlineKeyboardButton(text="🌐 المركز الإداري", callback_data="btn_admin")
-        
-        # ترتيب الأزرار في صفوف
-        markup.add(btn_create)
-        markup.add(btn_interact, btn_sub)
-        markup.add(btn_admin)
-        
-        bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
-        return
-
-    # إذا أرسل المستخدم اسماً مباشراً (خارج نطاق الضغط على الأزرار) لتوليد رابط تصويت سريع
-    target_name = message.text
-    markup_share = InlineKeyboardMarkup()
-    share_button = InlineKeyboardButton(
-        text="🚀 اضغط هنا لنشر التصويت والاسم", 
-        switch_inline_query=f"vote_{target_name}"
-    )
-    markup_share.add(share_button)
-
-    bot.reply_to(
-        message, 
-        f"✅ تم تجهيز رابط التصويت بنجاح للاسم: **{target_name}**\n\nاضغط على الزر بالأسفل لتبدأ بنشره في المجموعات والقنوات على شكل نقاط للتصويت لها👇", 
-        reply_markup=markup_share,
-        parse_mode="Markdown"
-    )
-
-# 3. معالجة الضغط على أزرار لوحة التحكم (Callback Queries)
-@bot.callback_query_handler(func=lambda call: True)
-def callback_listener(call):
-    if call.data == "create_vote":
-        bot.send_message(call.message.chat.id, "📝 حسناً، أرسل لي الآن الاسم الذي تريد إنشاء تصويت له.")
-    elif call.data == "btn_interact":
-        bot.send_message(call.message.chat.id, "⚙️ قسم تخصيص أزرار التفاعل (سيتم ربطه بالإعدادات قريباً).")
-    elif call.data == "btn_sub":
-        bot.send_message(call.message.chat.id, f"📢 إعدادات الاشتراك الإجباري الحالية مربوطة بـ: {CHANNEL_USERNAME}")
-    elif call.data == "btn_admin":
-        bot.send_message(call.message.chat.id, "🔒 المركز الإداري خاص بمالك البوت فقط.")
-    
-    # لإنهاء حالة التحميل بالزر بعد الضغط
-    bot.answer_callback_query(call.id)
-
-# 4. معالجة نظام الإنلاين (Inline Query) لنشر التصويت بالنقاط
-@bot.inline_handler(func=lambda query: query.query.startswith('vote_'))
-def inline_vote_generator(query):
-    try:
-        name_to_vote = query.query.split('vote_')[1]
-        
-        results_text = (
-            f"📊 تصويت جديد للاسم: **{name_to_vote}**\n\n"
-            "• ━━━━━━━━━━━━━━━━━━ •\n"
-            "اضغط على الرابط بالأسفل لدعم هذا الاسم والتصويت له!\n"
-            "• ━━━━━━━━━━━━━━━━━━ •"
-        )
-        
-        reply_markup = InlineKeyboardMarkup()
-        vote_url = f"https://t.me/{bot.get_me().username}?start=voted_{query.from_user.id}"
-        reply_markup.add(InlineKeyboardButton(text="📥 اضغط هنا للتصويت له", url=vote_url))
-        
-        item = InlineQueryResultArticle(
-            id='1',
-            title=f"نشر منشور تصويت لـ {name_to_vote}",
-            description="اضغط هنا لإرسال المنشور فوراً بنظام النقاط",
-            input_message_content=InputTextMessageContent(results_text, parse_mode="Markdown"),
+    # التحقق من الاشتراك إذا كانت الميزة مفعّلة
+    if ENABLE_FORCE_SUB and not await is_user_subscribed(user_id, context):
+        keyboard = [
+            [InlineKeyboardButton("📢 اشترك في القناة", url=CHANNEL_URL)],
+            [InlineKeyboardButton("✅ تحقق من الاشتراك", callback_data="check_sub")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            f"⚠️ يجب عليك الاشتراك في القناة أولاً لاستخدام البوت:\n{CHANNEL_USERNAME}",
             reply_markup=reply_markup
         )
-        
-        bot.answer_inline_query(query.id, [item], cache_time=1)
-    except Exception as e:
-        print(e)
+        return
 
-bot.polling()
+    # الواجهة الرئيسية
+    keyboard = [[InlineKeyboardButton("❤️ تصويت / تفاعل", callback_data="vote")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("أهلاً بك! اضغط على الزر أدناه للتصويت:", reply_markup=reply_markup)
+
+# التعامل مع الضغط على الأزرار
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    
+    # زر التحقق من الاشتراك
+    if query.data == "check_sub":
+        if await is_user_subscribed(user.id, context):
+            keyboard = [[InlineKeyboardButton("❤️ تصويت / تفاعل", callback_data="vote")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text("✅ تم التحقق بنجاح! يمكنك الآن الاستخدام:", reply_markup=reply_markup)
+        else:
+            await query.answer("❌ لم تشترك في القناة بعد!", show_alert=True)
+        return
+
+    # زر التصويت
+    if query.data == "vote":
+        # إعادة التأكد من الاشتراك إذا كان مفاعلاً
+        if ENABLE_FORCE_SUB and not await is_user_subscribed(user.id, context):
+            await query.edit_message_text(f"⚠️ يرجى الاشتراك في القناة أولاً: {CHANNEL_USERNAME}")
+            return
+
+        # فحص الحساب الوهمي/الرشق
+        is_fake, reason = is_suspicious_user(user)
+        if is_fake:
+            await query.edit_message_text(f"⚠️ تم رفض التصويت.\nالسبب: الحساب مشبوه ({reason}).")
+        else:
+            await query.edit_message_text(f"✅ تم تسجيل تصويتك بنجاح يا {user.first_name}!")
+
+if name == 'main':
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    
+    print("البوت يعمل الآن...")
+    app.run_polling()
     
