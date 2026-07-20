@@ -1,17 +1,19 @@
-from aiogram import Bot, Dispatcher, executor, types
+import asyncio
+from aiogram import Bot, Dispatcher, types
 
 TOKEN = "8598589369:AAHVOMO2AfeHxpfQn_1PgtH1l4hKASlCGzs"
-
 bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
-@dp.message_handler(commands=['start'])
-async def start(message: types.Message):
-    await message.answer("أهلاً بك، هذا بوت الرسائل")
-
-@dp.message_handler()
+@dp.message()
 async def echo(message: types.Message):
-    await message.answer("وصلت رسالتك: " + message.text)
+    if message.text == "/start":
+        await message.answer("أهلاً بك، هذا بوت الرسائل")
+    else:
+        await message.answer(f"وصلت رسالتك: {message.text}")
+
+async def main():
+    await dp.start_polling(bot)
 
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
