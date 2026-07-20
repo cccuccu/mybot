@@ -1,74 +1,66 @@
-import asyncio
-from aiogram import Bot, Dispatcher, types
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+import time
+import requests
 
 TOKEN = "8598589369:AAHVOMO2AfeHxpfQn_1PgtH1l4hKASlCGzs"
 ADMIN_ID = 8182419990
-CHANNEL_USERNAME = "@DAVMTGR"
+CHANNEL_USERNAME = "DAVMTGR" # اسم القناة بدون @
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
-
-# دالة لفحص الاشتراك الإجباري
-async def check_subscription(user_id: int) -> bool:
+def check_subscription(user_id):
     try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        if member.status in ["member", "administrator", "creator"]:
-            return True
+        url = f"https://api.telegram.org/bot{TOKEN}/getChatMember?chat_id=@{CHANNEL_USERNAME}&user_id={user_id}"
+        res = requests.get(url).json()
+        if res.get("ok"):
+            status = res["result"]["status"]
+            if status in ["member", "administrator", "creator"]:
+                return True
         return False
-    except Exception as e:
-        print(f"Error checking sub: {e}")
+    except:
         return True
 
-@dp.message()
-async def main_handler(message: types.Message):
-    user_id = message.from_user.id
-
-    # 1. إذا كان المرسل هو المالك (أنت)
-    if user_id == ADMIN_ID:
-        await message.answer("أهلاً بك يا مالك البوت. هذه لوحة التحكم الخاصة بك.")
-        return
-
-    # 2. فحص الاشتراك الإجباري للمستخدمين
-    is_subscribed = await check_subscription(user_id)
-    if not is_subscribed:
-        builder = InlineKeyboardBuilder()
-        builder.button(text="اضغط هنا للاشتراك في القناة 📢", url=f"https://t.me/DAVMTGR")
-        builder.button(text="تأكد من الاشتراك بعد الانضمام ✅", callback_data="check_sub")
-        builder.adjust(1)
-        
-        await message.answer(
-            f"❌ عذراً عزيزي، يجب عليك الاشتراك في قناة متجر ديف أولاً لاستخدام البوت المطور.\n\nاشترك في القناة ثم اضغط على زر التأكيد أدناه👇",
-            reply_markup=builder.as_markup()
-        )
-        return
-
-    # 3. إذا ضغط المستخدم على /start وهو مشترك
-    if message.text == "/start":
-        await message.answer("👋 أهلاً بك في قناة متجر ديف!\n\nيسعدنا تواصلك معنا، يمكنك الآن إرسال استفسارك أو رسالتك مباشرة هنا، وسيتم إيصالها للمالك والرد عليك في أقرب وقت ممكن.")
-        return
-
-    # 4. تحويل رسائل المستخدمين إلى حسابك الشخصي
-    user_name = message.from_user.full_name
-    user_username = f"@{message.from_user.username}" if message.from_user.username else "بدون معرف"
-    user_text = message.text
-
-    admin_message = (
-        "📩 رسالة جديدة من متجر ديف:\n\n"
-        f"👤 الاسم: {user_name}\n"
-        f"🔗 المعرف: {user_username}\n"
-        f"🆔 الآيدي: `{user_id}`\n\n"
-        f"💬 النص:\n{user_text}"
-    )
-
+def send_msg(chat_id, text):
     try:
-        await bot.send_message(chat_id=ADMIN_ID, text=admin_message, parse_mode="Markdown")
-        await message.answer("✅ تم إرسال رسالتك إلى إدارة متجر ديف بنجاح، سيتم الرد عليك قريباً.")
-    except Exception as e:
-        print(f"Error forwarding message: {e}")
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"})
+    except:
+        pass
 
-async def main():
-    await dp.start_polling(bot)
+def main():
+    offset = 0
+    print("Bot started successfully...")
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={offset}&timeout=20"
+            updates = requests.get(url).json()
+            if updates.get("ok") and updates.get("result"):
+                for update in updates["result"]:
+                    offset = update["update_id"] + 1
+                    if "message" in update:
+                        msg = update["message"]
+                        user_id = msg["from"]["id"]
+                        
+                        if user_id == ADMIN_ID:
+                            send_msg(ADMIN_ID, "أهلاً بك يا مالك البوت. هذه لوحة التحكم الخاصة بك.")
+                            continue
+                            
+                        if not check_subscription(user_id):
+                            txt = "❌ عذراً عزيزي، يجب عليك الاشتراك في قناة متجر ديف أولاً لاستخدام البوت المطور.\n\nاشترك في القناة ثم أعد إرسال /start 👇\nhttps://t.me/DAVMTGR"
+                            send_msg(user_id, txt)
+                            continue
+                            
+                        if msg.get("text") == "/start":
+                            send_msg(user_id, "👋 أهلاً بك في قناة متجر ديف!\n\nيسعدنا تواصلك معنا، يمكنك الآن إرسال استفسارك أو رسالتك مباشرة هنا، وسيتم إيصالها للمالك والرد عليك في أقرب وقت ممكن.")
+                            continue
+                            
+                        if "text" in msg:
+                            user_name = msg["from"].get("first_name", "") + " " + msg["from"].get("last_name", "")
+                            user_username = f"@{msg['from']['username']}" if "username" in msg["from"] else "بدون معرف"
+                            
+                            admin_message = f"📩 رسالة جديدة من متجر ديف:\n\n👤 الاسم: {user_name}\n🔗 المعرف: {user_username}\n🆔 الآيدي: `{user_id}`\n\n💬 النص:\n{msg['text']}"
+                            send_msg(ADMIN_ID, admin_message)
+                            send_msg(user_id, "✅ تم إرسال رسالتك إلى إدارة متجر ديف بنجاح، سيتم الرد عليك قريباً.")
+        except:
+            pass
+        time.sleep(1)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
