@@ -1,7 +1,22 @@
 import logging
 import re
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+import uuid
+from telegram import (
+    Update, 
+    InlineKeyboardButton, 
+    InlineKeyboardMarkup, 
+    InlineQueryResultArticle, 
+    InputTextMessageContent
+)
+from telegram.ext import (
+    ApplicationBuilder, 
+    CommandHandler, 
+    MessageHandler, 
+    CallbackQueryHandler, 
+    InlineQueryHandler, 
+    filters, 
+    ContextTypes
+)
 from telegram.error import TelegramError
 
 # إعداد التسجيل للأخطاء
@@ -10,33 +25,29 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 # ==========================================
 # ⚙️ إعدادات المطور الأساسية
 # ==========================================
-TOKEN = "8598589369:AAHVOMO2AfeHxpfQn_1PgtH1l4hKASlCGzs"      # ✅ تم إضافة التوكين الخاص بك
-ADMIN_ID = 8182419990                                     # ✅ تم تحديد الـ ID الخاص بك
+TOKEN = "8598589369:AAHVOMO2AfeHxpfQn_1PgtH1l4hKASlCGzs"
+ADMIN_ID = 8182419990
 
-# متغيّرات النظام (يمكن تعديلها من داخل البوت مستقبلاً)
+# إعدادات القناة العامة للبوت (الاشتراك الإجباري)
 force_sub_config = {
     "enabled": True,
-    "username": "@YourChannel",
-    "url": "https://t.me/YourChannel"
+    "username": "@DAVMTGR",
+    "url": "https://t.me/DAVMTGR"
 }
+
+# جلسات المستخدمين لإعداد زر التفاعل أثناء الإنشاء
+user_sessions = {}
+
+# قاعدة بيانات التصويتات {poll_id: {"title": str, "emoji": str, "votes": set_of_user_ids}}
+polls_db = {}
+
+# ==========================================
+# 🛠️ أدوات مساعدة
 # ==========================================
 
-# دالة التحقق مما إذا كان المستخدم هو الأدمن
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
 
-# دالة كشف الحسابات المشبوهة/الوهمية
-def is_suspicious_user(user) -> tuple[bool, str]:
-    if not user.username:
-        return True, "لا يوجد معرف (@username)"
-    if re.search(r'\d{5,}$', user.username):
-        return True, "المعرف يحتوي على أرقام عشوائية كثيرة"
-    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
-    if len(full_name) < 2:
-        return True, "الاسم قصير جداً"
-    return False, "حساب طبيعي"
-
-# دالة التحقق من الاشتراك في القناة
 async def is_user_subscribed(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     if not force_sub_config["enabled"]:
         return True
@@ -46,99 +57,270 @@ async def is_user_subscribed(user_id: int, context: ContextTypes.DEFAULT_TYPE) -
     except TelegramError:
         return False
 
-# ==========================================
-# 👑 أوامر التحكم الخاصة بالمطور (من داخل البوت)
-# ==========================================
-
-async def force_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    force_sub_config["enabled"] = True
-    await update.message.reply_text("✅ تم **تفعيل** ميزة الاشتراك الإجباري بنجاح.")
-
-async def force_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    force_sub_config["enabled"] = False
-    await update.message.reply_text("❌ تم **إيقاف** ميزة الاشتراك الإجباري بنجاح.")
-
-async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    
-    # التأكد من إدخال المعرف والرابط
-    if len(context.args) < 2:
-        await update.message.reply_text("⚠️ الاستخدام الصحيح:\n`/set_channel @username https://t.me/username`", parse_mode="Markdown")
-        return
-    
-    force_sub_config["username"] = context.args[0]
-    force_sub_config["url"] = context.args[1]
-    
-    await update.message.reply_text(
-        f"✅ تم تحديث بيانات القناة بنجاح!\n\n"
-        f"📢 المعرف: `{force_sub_config['username']}`\n"
-        f"🔗 الرابط: {force_sub_config['url']}", 
-        parse_mode="Markdown"
-    )
-
-async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-    status_str = "مفعلة 🟢" if force_sub_config["enabled"] else "معطلة 🔴"
-    await update.message.reply_text(
-        f"⚙️ **حالة الاشتراك الإجباري:** {status_str}\n"
-        f"📢 **القناة الحالية:** {force_sub_config['username']}\n"
-        f"🔗 **الرابط:** {force_sub_config['url']}",
-        parse_mode="Markdown"
-    )
+def get_main_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 إنشاء تصويت جديد", callback_data="btn_create_poll")],
+        [
+            InlineKeyboardButton("📢 الاشتراك الإجباري", callback_data="btn_force_sub"),
+            InlineKeyboardButton("⚪ زر التفاعل", callback_data="btn_reaction")
+        ],
+        [InlineKeyboardButton("🌐 المركز الإداري", callback_data="btn_admin_center")]
+    ])
 
 # ==========================================
-# 🤖 أوامر البوت العامة للمستخدمين
+# 🤖 بدء التشغيل /start
 # ==========================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
+
     if force_sub_config["enabled"] and not await is_user_subscribed(user_id, context):
-        keyboard = [
-            [InlineKeyboardButton("📢 اشترك في القناة", url=force_sub_config["url"])],
-            [InlineKeyboardButton("✅ تحقق من الاشتراك", callback_data="check_sub")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            f"⚠️ يجب عليك الاشتراك في القناة أولاً لاستخدام البوت:\n{force_sub_config['username']}",
-            reply_markup=reply_markup
+        msg = (
+            f"🚸| عذراً عزيزي\n"
+            f"🔰| عليك الاشتراك بقناة البوت لتتمكن من استخدامه\n\n"
+            f"- {force_sub_config['url']}\n\n"
+            f"‼️| اشترك ثم ارسل /start"
+        )
+        await update.message.reply_text(msg, disable_web_page_preview=True)
+        return
+
+    await update.message.reply_text(
+        "أهلاً بك في بوت إنشاء التصويت! اختر من القائمة أدناه:",
+        reply_markup=get_main_keyboard()
+    )
+
+# ==========================================
+# 🔘 معالجة الأزرار الرئيسية والاختيارات
+# ==========================================
+
+async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+
+    # زر إنشاء تصويت جديد
+    if data == "btn_create_poll":
+        await query.answer()
+        user_sessions[user_id] = {"state": "waiting_title", "emoji": "❤️"}
+        await query.edit_message_text(
+            "📝 **أرسل لي الآن اسم المسابقة أو صاحب التصويت:**",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إلغاء", callback_data="btn_back_main")]]),
+            parse_mode="Markdown"
         )
         return
 
-    keyboard = [[InlineKeyboardButton("❤️ تصويت / تفاعل", callback_data="vote")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("أهلاً بك! اضغط على الزر أدناه للتصويت:", reply_markup=reply_markup)
-
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user = query.from_user
-    
-    if query.data == "check_sub":
-        if await is_user_subscribed(user.id, context):
-            keyboard = [[InlineKeyboardButton("❤️ تصويت / تفاعل", callback_data="vote")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("✅ تم التحقق بنجاح! يمكنك الآن الاستخدام:", reply_markup=reply_markup)
-        else:
-            await query.answer("❌ لم تشترك في القناة بعد!", show_alert=True)
+    # زر تغيير التفاعل المخصص للمستخدم
+    if data == "btn_reaction":
+        await query.answer()
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("❤️", callback_data="set_emoji_❤️"),
+                InlineKeyboardButton("🔥", callback_data="set_emoji_🔥"),
+                InlineKeyboardButton("👍", callback_data="set_emoji_👍"),
+                InlineKeyboardButton("👏", callback_data="set_emoji_👏")
+            ],
+            [
+                InlineKeyboardButton("⭐", callback_data="set_emoji_⭐"),
+                InlineKeyboardButton("🎉", callback_data="set_emoji_🎉"),
+                InlineKeyboardButton("💎", callback_data="set_emoji_💎")
+            ],
+            [InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]
+        ])
+        current_emoji = user_sessions.get(user_id, {}).get("emoji", "❤️")
+        await query.edit_message_text(
+            f"⚪ **اختيار زر التفاعل الخاص بك:**\n\nالإيموجي المحدد حالياً للتصويتات الجديدة: {current_emoji}\nاختر الإيموجي الذي تريد استخدامه في تصويتك القادم:",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
         return
 
-    if query.data == "vote":
-        if force_sub_config["enabled"] and not await is_user_subscribed(user.id, context):
-            await query.edit_message_text(f"⚠️ يرجى الاشتراك في القناة أولاً: {force_sub_config['username']}")
-            return
+    # حفظ الإيموجي المختار من قبل المستخدم
+    if data.startswith("set_emoji_"):
+        selected_emoji = data.replace("set_emoji_", "")
+        if user_id not in user_sessions:
+            user_sessions[user_id] = {}
+        user_sessions[user_id]["emoji"] = selected_emoji
+        await query.answer(f"✅ تم تحديد زر التفاعل: {selected_emoji}")
+        await handle_buttons(update, context) # إعادة تحديث الواجهة
+        return
 
-        is_fake, reason = is_suspicious_user(user)
-        if is_fake:
-            await query.edit_message_text(f"⚠️ تم رفض التصويت.\nالسبب: الحساب مشبوه ({reason}).")
+    # زر الاشتراك الإجباري (معلومات)
+    if data == "btn_force_sub":
+        await query.answer()
+        status_str = "مفعل 🟢" if force_sub_config["enabled"] else "معطل 🔴"
+        text = (
+            f"📢 **إعدادات الاشتراك الإجباري:**\n\n"
+            f"• الحالة: {status_str}\n"
+            f"• القناة: {force_sub_config['username']}\n"
+            f"• الرابط: {force_sub_config['url']}\n\n"
+            f"*(يشترط البوت الاشتراك في هذه القناة للبدء أو التصويت)*"
+        )
+        keyboard = []
+        if is_admin(user_id):
+            toggle_text = "❌ تعطيل الاشتراك" if force_sub_config["enabled"] else "✅ تفعيل الاشتراك"
+            keyboard.append([InlineKeyboardButton(toggle_text, callback_data="toggle_force_sub")])
+        keyboard.append([InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return
+
+    # زر المركز الإداري
+    if data == "btn_admin_center":
+        await query.answer()
+        if not is_admin(user_id):
+            await query.answer("⚠️ هذا الخيار مخصص لمدير البوت فقط!", show_alert=True)
+            return
+        admin_text = (
+            f"🌐 **المركز الإداري للمطور**\n\n"
+            f"• أيدي الأدمن: `{ADMIN_ID}`\n"
+            f"• عدد التصويتات المنشأة: `{len(polls_db)}`\n"
+            f"• حالة الاشتراك: `{'مفعل' if force_sub_config['enabled'] else 'معطل'}`"
+        )
+        await query.edit_message_text(
+            admin_text,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]]),
+            parse_mode="Markdown"
+        )
+        return
+
+    # زر العودة للرئيسية
+    if data == "btn_back_main":
+        await query.answer()
+        if user_id in user_sessions and "state" in user_sessions[user_id]:
+            del user_sessions[user_id]["state"]
+        await query.edit_message_text(
+            "أهلاً بك في بوت إنشاء التصويت! اختر من القائمة أدناه:",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    # تفعيل / تعطيل الاشتراك الإجباري من قبل الأدمن
+    if data == "toggle_force_sub" and is_admin(user_id):
+        force_sub_config["enabled"] = not force_sub_config["enabled"]
+        await query.answer("تم تغيير حالة الاشتراك الإجباري!")
+        await handle_buttons(update, context)
+        return
+
+    # معالجة الضغط على زر التصويت
+    if data.startswith("vote_"):
+        await handle_vote_action(query, context)
+
+# ==========================================
+# 📝 استلام النصوص وإنشاء التصويت
+# ==========================================
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text: return
+    user = update.effective_user
+    user_id = user.id
+
+    # تحقق من الاشتراك الإجباري لصانع التصويت
+    if force_sub_config["enabled"] and not await is_user_subscribed(user_id, context):
+        msg = (
+            f"🚸| عذراً عزيزي\n"
+            f"🔰| عليك الاشتراك بقناة البوت لتتمكن من استخدامه\n\n"
+            f"- {force_sub_config['url']}\n\n"
+            f"‼️| اشترك ثم ارسل /start"
+        )
+        await update.message.reply_text(msg, disable_web_page_preview=True)
+        return
+
+    text = update.message.text.strip()
+    
+    # اختيار الإيموجي المحدد من قبل المستخدم أو الافتراضي ❤️
+    user_emoji = user_sessions.get(user_id, {}).get("emoji", "❤️")
+
+    # إنشاء تصويت بالاسم والإيموجي المختار
+    poll_id = f"{user_id}{int(update.message.date.timestamp())}"
+    polls_db[poll_id] = {
+        "title": text,
+        "emoji": user_emoji,
+        "votes": set()
+    }
+
+    bot_username = (await context.bot.get_me()).username
+    inline_code = f"@{bot_username} {poll_id}"
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("• اضغط هنا للمشاركة •", switch_inline_query=poll_id)]
+    ])
+
+    reply_msg = f"<b>{text}</b>\n\n• <code>{inline_code}</code>"
+    await update.message.reply_text(reply_msg, reply_markup=keyboard, parse_mode="HTML")
+
+# ==========================================
+# 🔗 معالجة الـ Inline Query والمشاركة
+# ==========================================
+
+async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.inline_query.query.strip()
+    
+    if query in polls_db:
+        poll_data = polls_db[query]
+        title = poll_data["title"]
+        emoji = poll_data.get("emoji", "❤️")
+        vote_count = len(poll_data["votes"])
+        bot_username = (await context.bot.get_me()).username
+        
+        content = InputTextMessageContent(
+            message_text=f"📊 **التصويت لصالح:** {title}\n\n{emoji} عدد الأصوات: {vote_count}",
+            parse_mode="Markdown"
+        )
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"{emoji} تصويت ({vote_count})", callback_data=f"vote_{query}")],
+            [InlineKeyboardButton("اضغط هنا للدخول الى البوت !", url=f"https://t.me/{bot_username}")]
+        ])
+
+        results = [
+            InlineQueryResultArticle(
+                id=str(uuid.uuid4()),
+                title="اضغط هنا للارسال .",
+                description=f"مشاركة تصويت: {title}",
+                input_message_content=content,
+                reply_markup=keyboard
+            )
+        ]
+        await update.inline_query.answer(results, cache_time=1)
+
+# ==========================================
+# ❤️ احتساب الصوت والتحقق من اشتراك المصوّت
+# ==========================================
+
+async def handle_vote_action(query, context):
+    user_id = query.from_user.id
+    
+    # ⚠️ التحقق الحاسم: هل المصوّت مشترك في القناة المحددة؟
+    if force_sub_config["enabled"] and not await is_user_subscribed(user_id, context):
+        await query.answer(
+            f"⚠️ عذراً! يجب عليك الاشتراك في القناة أولاً لتتمكن من التصويت:\n{force_sub_config['username']}", 
+            show_alert=True
+        )
+        return
+
+    poll_id = query.data.replace("vote_", "")
+    if poll_id in polls_db:
+        poll = polls_db[poll_id]
+        if user_id in poll["votes"]:
+            await query.answer("❌ لقد قمت بالتصويت سابقاً!", show_alert=True)
         else:
-            await query.edit_message_text(f"✅ تم تسجيل تصويتك بنجاح يا {user.first_name}!")
+            poll["votes"].add(user_id)
+            vote_count = len(poll["votes"])
+            emoji = poll.get("emoji", "❤️")
+            bot_username = (await context.bot.get_me()).username
+            
+            new_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"{emoji} تصويت ({vote_count})", callback_data=f"vote_{poll_id}")],
+                [InlineKeyboardButton("اضغط هنا للدخول الى البوت !", url=f"https://t.me/{bot_username}")]
+            ])
+            
+            await query.edit_message_text(
+                text=f"📊 **التصويت لصالح:** {poll['title']}\n\n{emoji} عدد الأصوات: {vote_count}",
+                reply_markup=new_keyboard,
+                parse_mode="Markdown"
+            )
+            await query.answer("✅ تم تسجيل تصويتك بنجاح!")
+    else:
+        await query.answer("⚠️ هذا التصويت غير متاح.", show_alert=True)
 
 # ==========================================
 # 🚀 تشغيل البوت
@@ -146,15 +328,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # أوامر المستخدمين
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    
-    # أوامر الأدمن للتحكم من داخل الشات
-    app.add_handler(CommandHandler("force_on", force_on))
-    app.add_handler(CommandHandler("force_off", force_off))
-    app.add_handler(CommandHandler("set_channel", set_channel))
-    app.add_handler(CommandHandler("status", bot_status))
+    app.add_handler(InlineQueryHandler(inline_query_handler))
+    app.add_handler(CallbackQueryHandler(handle_buttons))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     print("البوت يعمل الآن...")
     app.run_polling()
