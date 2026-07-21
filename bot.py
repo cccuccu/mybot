@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 import uuid
 from threading import Thread
 from flask import Flask
@@ -25,17 +24,17 @@ from telegram.error import TelegramError
 # ==========================================
 # 🌐 خادم ويب مصغر لإبقاء البوت نشطاً مجاناً على Render
 # ==========================================
-app = Flask('')
+web_app = Flask('')
 
-@app.route('/')
+@web_app.route('/')
 def home():
-    return "Bot is running!"
+    return "Bot is active!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+    web_app.run(host='0.0.0.0', port=port)
 
-# تشغيل السيرفر في الخلفية
+# تشغيل السيرفر في الخلفية تلقائياً
 Thread(target=run_web_server, daemon=True).start()
 
 # إعداد التسجيل للأخطاء
@@ -57,7 +56,7 @@ force_sub_config = {
 # جلسات المستخدمين لإعداد زر التفاعل
 user_sessions = {}
 
-# قاعدة بيانات التصويتات {poll_id: {"title": str, "emoji": str, "votes": set_of_user_ids}}
+# قاعدة بيانات التصويتات
 polls_db = {}
 
 # ==========================================
@@ -331,12 +330,12 @@ async def handle_vote_action(query, context):
 # 🚀 تشغيل البوت
 # ==========================================
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(TOKEN).build()
+    bot_app = ApplicationBuilder().token(TOKEN).build()
     
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(InlineQueryHandler(inline_query_handler))
-    app.add_handler(CallbackQueryHandler(handle_buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(InlineQueryHandler(inline_query_handler))
+    bot_app.add_handler(CallbackQueryHandler(handle_buttons))
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     print("البوت يعمل...")
-    app.run_polling()
+    bot_app.run_polling()
