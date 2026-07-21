@@ -5,7 +5,7 @@ import subprocess
 # 📦 تثبيت المكتبات تلقائياً عند التشغيل
 # ==========================================
 def install_requirements():
-    required = {"python-telegram-bot==20.7", "Flask==3.0.0"}
+    required = ["python-telegram-bot==20.7", "Flask==3.0.0"]
     for package in required:
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install", package])
@@ -41,7 +41,7 @@ from telegram.ext import (
 from telegram.error import TelegramError
 
 # ==========================================
-# 🌐 خادم ويب مصغر لإبقاء البوت نشطاً مجاناً على Render
+# 🌐 خادم ويب مصغر لإبقاء البوت نشطاً على Render
 # ==========================================
 web_app = Flask('')
 
@@ -53,10 +53,8 @@ def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host='0.0.0.0', port=port)
 
-# تشغيل خادم الويب في الخلفية تلقائياً
 Thread(target=run_web_server, daemon=True).start()
 
-# إعداد تسجيل الأخطاء
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # ==========================================
@@ -65,17 +63,13 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = "8598589369:AAHVOMO2AfeHxpfQn_1PgtH1l4hKASlCGzs"
 ADMIN_ID = 8182419990
 
-# إعدادات القناة العامة للبوت (الاشتراك الإجباري)
 force_sub_config = {
     "enabled": True,
     "username": "@DAVMTGR",
     "url": "https://t.me/DAVMTGR"
 }
 
-# جلسات المستخدمين لإعداد زر التفاعل
 user_sessions = {}
-
-# قاعدة بيانات التصويتات
 polls_db = {}
 
 # ==========================================
@@ -127,7 +121,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ==========================================
-# 🔘 معالجة الأزرار
+# 🔘 معالجة الأزرار (Buttons Handler)
 # ==========================================
 
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -135,9 +129,12 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
 
+    # 1. زر إنشاء تصويت جديد
     if data == "btn_create_poll":
         await query.answer()
-        user_sessions[user_id] = {"state": "waiting_title", "emoji": "❤️"}
+        if user_id not in user_sessions:
+            user_sessions[user_id] = {}
+        user_sessions[user_id]["state"] = "waiting_title"
         await query.edit_message_text(
             "📝 **أرسل لي الآن اسم المسابقة أو صاحب التصويت:**",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إلغاء", callback_data="btn_back_main")]]),
@@ -145,8 +142,10 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 2. زر اختيار الإيموجي والتفاعل
     if data == "btn_reaction":
         await query.answer()
+        current_emoji = user_sessions.get(user_id, {}).get("emoji", "❤️")
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("❤️", callback_data="set_emoji_❤️"),
@@ -161,7 +160,6 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             [InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]
         ])
-        current_emoji = user_sessions.get(user_id, {}).get("emoji", "❤️")
         await query.edit_message_text(
             f"⚪ **اختيار زر التفاعل الخاص بك:**\n\nالإيموجي المحدد حالياً: {current_emoji}\nاختر الإيموجي الذي تريد استخدامه في تصويتك القادم:",
             reply_markup=keyboard,
@@ -169,15 +167,37 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # تحديد الإيموجي عند الضغط عليه
     if data.startswith("set_emoji_"):
         selected_emoji = data.replace("set_emoji_", "")
         if user_id not in user_sessions:
             user_sessions[user_id] = {}
         user_sessions[user_id]["emoji"] = selected_emoji
-        await query.answer(f"✅ تم تحديد زر التفاعل: {selected_emoji}")
-        await handle_buttons(update, context)
+        await query.answer(f"✅ تم تحديد الإيموجي: {selected_emoji}", show_alert=True)
+        
+        # إرجاع المستخدم للوحة التفاعل تحديثاً للرمز
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("❤️", callback_data="set_emoji_❤️"),
+                InlineKeyboardButton("🔥", callback_data="set_emoji_🔥"),
+                InlineKeyboardButton("👍", callback_data="set_emoji_👍"),
+                InlineKeyboardButton("👏", callback_data="set_emoji_👏")
+            ],
+            [
+                InlineKeyboardButton("⭐", callback_data="set_emoji_⭐"),
+                InlineKeyboardButton("🎉", callback_data="set_emoji_🎉"),
+                InlineKeyboardButton("💎", callback_data="set_emoji_💎")
+            ],
+            [InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]
+        ])
+        await query.edit_message_text(
+            f"⚪ **اختيار زر التفاعل الخاص بك:**\n\nالإيموجي المحدد حالياً: {selected_emoji}\nاختر الإيموجي الذي تريد استخدامه في تصويتك القادم:",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
         return
 
+    # 3. زر الاشتراك الإجباري
     if data == "btn_force_sub":
         await query.answer()
         status_str = "مفعل 🟢" if force_sub_config["enabled"] else "معطل 🔴"
@@ -195,6 +215,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return
 
+    # 4. زر المركز الإداري
     if data == "btn_admin_center":
         await query.answer()
         if not is_admin(user_id):
@@ -213,6 +234,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 5. زر العودة للرئيسية
     if data == "btn_back_main":
         await query.answer()
         if user_id in user_sessions and "state" in user_sessions[user_id]:
@@ -223,12 +245,26 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 6. تبديل حالة الاشتراك الإجباري للأدمن
     if data == "toggle_force_sub" and is_admin(user_id):
         force_sub_config["enabled"] = not force_sub_config["enabled"]
-        await query.answer("تم تغيير حالة الاشتراك الإجباري!")
-        await handle_buttons(update, context)
+        await query.answer("تم تغيير حالة الاشتراك الإجباري!", show_alert=True)
+        status_str = "مفعل 🟢" if force_sub_config["enabled"] else "معطل 🔴"
+        text = (
+            f"📢 **إعدادات الاشتراك الإجباري:**\n\n"
+            f"• الحالة: {status_str}\n"
+            f"• القناة: {force_sub_config['username']}\n"
+            f"• الرابط: {force_sub_config['url']}\n"
+        )
+        toggle_text = "❌ تعطيل الاشتراك" if force_sub_config["enabled"] else "✅ تفعيل الاشتراك"
+        keyboard = [
+            [InlineKeyboardButton(toggle_text, callback_data="toggle_force_sub")],
+            [InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return
 
+    # 7. تسجيل التصويت
     if data.startswith("vote_"):
         await handle_vote_action(query, context)
 
@@ -238,8 +274,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
-    user = update.effective_user
-    user_id = user.id
+    user_id = update.effective_user.id
 
     if force_sub_config["enabled"] and not await is_user_subscribed(user_id, context):
         msg = (
