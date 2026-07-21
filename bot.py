@@ -1,3 +1,22 @@
+import sys
+import subprocess
+
+# ==========================================
+# 📦 تثبيت المكتبات تلقائياً عند التشغيل
+# ==========================================
+def install_requirements():
+    required = {"python-telegram-bot==20.7", "Flask==3.0.0"}
+    for package in required:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        except Exception as e:
+            print(f"Error installing {package}: {e}")
+
+install_requirements()
+
+# ==========================================
+# 🛠️ استيراد المكتبات المطلوبة
+# ==========================================
 import logging
 import os
 import uuid
@@ -34,10 +53,10 @@ def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host='0.0.0.0', port=port)
 
-# تشغيل السيرفر في الخلفية تلقائياً
+# تشغيل خادم الويب في الخلفية تلقائياً
 Thread(target=run_web_server, daemon=True).start()
 
-# إعداد التسجيل للأخطاء
+# إعداد تسجيل الأخطاء
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # ==========================================
