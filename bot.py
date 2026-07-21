@@ -1,382 +1,216 @@
-import sys
-import subprocess
-
-# ==========================================
-# 📦 تثبيت المكتبات تلقائياً عند التشغيل
-# ==========================================
-def install_requirements():
-    required = ["python-telegram-bot==20.7", "Flask==3.0.0"]
-    for package in required:
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-        except Exception as e:
-            print(f"Error installing {package}: {e}")
-
-install_requirements()
-
-# ==========================================
-# 🛠️ استيراد المكتبات المطلوبة
-# ==========================================
 import logging
-import os
-import uuid
-from threading import Thread
-from flask import Flask
-from telegram import (
-    Update, 
-    InlineKeyboardButton, 
-    InlineKeyboardMarkup, 
-    InlineQueryResultArticle, 
-    InputTextMessageContent
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
 from telegram.ext import (
-    ApplicationBuilder, 
-    CommandHandler, 
-    MessageHandler, 
-    CallbackQueryHandler, 
-    InlineQueryHandler, 
-    filters, 
-    ContextTypes
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, 
+    MessageHandler, ConversationHandler, filters, ContextTypes
 )
-from telegram.error import TelegramError
 
-# ==========================================
-# 🌐 خادم ويب مصغر لإبقاء البوت نشطاً على Render
-# ==========================================
-web_app = Flask('')
+# إعداد السجلات
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-@web_app.route('/')
-def home():
-    return "Bot is active!"
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    web_app.run(host='0.0.0.0', port=port)
-
-Thread(target=run_web_server, daemon=True).start()
-
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-
-# ==========================================
-# ⚙️ إعدادات المطور الأساسية
-# ==========================================
-TOKEN = "8598589369:AAHVOMO2AfeHxpfQn_1PgtH1l4hKASlCGzs"
+# 🔑 التوكن والآيدي الخاص بك
+TOKEN = "8813278276:AAFshG2TngZXJ8ZewhU_Lq6TRy1mbt2Ez6M"
 ADMIN_ID = 8182419990
 
-force_sub_config = {
-    "enabled": True,
-    "username": "@DAVMTGR",
-    "url": "https://t.me/DAVMTGR"
-}
+# 📊 البيانات المخزنة (تتعدل بالكامل من داخل الشات)
+developer_info = "@YourHandle"
+start_message_custom = "• اهلاً بك في لوحة تحكم السايت والتواصل"
+force_channel = ""  # يتم تعيين القناة من داخل البوت مباشرة
+fake_users_count = 0 
+user_ids = set()
 
-user_sessions = {}
-polls_db = {}
+# حالات الانتظار لإدخال البيانات من الشات
+SET_DEV, SET_START, SET_FORCE_SUB, SET_FAKE_SUB, BROADCAST = range(5)
 
-# ==========================================
-# 🛠️ أدوات مساعدة
-# ==========================================
+# 🏠 لوحة التحكم المطابقة للصورة
+def get_admin_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("تغيير المطور", callback_data="change_dev"),
+            InlineKeyboardButton("تغيير /start", callback_data="change_start")
+        ],
+        [
+            InlineKeyboardButton("الاشتراك الاجباري", callback_data="force_sub"),
+            InlineKeyboardButton("الاحصائيات", callback_data="stats")
+        ],
+        [
+            InlineKeyboardButton("الاشتراك الوهمي", callback_data="fake_sub"),
+            InlineKeyboardButton("الاذاعة", callback_data="broadcast")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
-def is_admin(user_id: int) -> bool:
-    return user_id == ADMIN_ID
-
-async def is_user_subscribed(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    if not force_sub_config["enabled"]:
+# 🔍 فحص الاشتراك الإجباري
+async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    if not force_channel:
         return True
     try:
-        member = await context.bot.get_chat_member(chat_id=force_sub_config["username"], user_id=user_id)
-        return member.status in ['member', 'administrator', 'creator']
-    except TelegramError:
-        return False
+        member = await context.bot.get_chat_member(chat_id=force_channel, user_id=user_id)
+        return member.status in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER]
+    except Exception:
+        return True
 
-def get_main_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 إنشاء تصويت جديد", callback_data="btn_create_poll")],
-        [
-            InlineKeyboardButton("📢 الاشتراك الإجباري", callback_data="btn_force_sub"),
-            InlineKeyboardButton("⚪ زر التفاعل", callback_data="btn_reaction")
-        ],
-        [InlineKeyboardButton("🌐 المركز الإداري", callback_data="btn_admin_center")]
-    ])
-
-# ==========================================
-# 🤖 بدء التشغيل /start
-# ==========================================
-
+# 🚀 أمر /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_ids.add(user.id)
 
-    if force_sub_config["enabled"] and not await is_user_subscribed(user_id, context):
-        msg = (
-            f"🚸| عذراً عزيزي\n"
-            f"🔰| عليك الاشتراك بقناة البوت لتتمكن من استخدامه\n\n"
-            f"- {force_sub_config['url']}\n\n"
-            f"‼️| اشترك ثم ارسل /start"
-        )
-        await update.message.reply_text(msg, disable_web_page_preview=True)
+    # لوحة الأدمن
+    if user.id == ADMIN_ID:
+        text = f"• اهلاً بك في لوحة الادمن\n\n{start_message_custom}"
+        if update.message:
+            await update.message.reply_text(text, reply_markup=get_admin_keyboard())
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(text, reply_markup=get_admin_keyboard())
         return
 
-    await update.message.reply_text(
-        "أهلاً بك في بوت إنشاء التصويت! اختر من القائمة أدناه:",
-        reply_markup=get_main_keyboard()
-    )
+    # المستخدم العادي (فحص الاشتراك الإجباري)
+    is_subscribed = await check_subscription(user.id, context)
+    if not is_subscribed:
+        clean_channel = force_channel.replace('@', '')
+        keyboard = [[InlineKeyboardButton("📢 اضغط هنا للاشتراك في القناة", url=f"https://t.me/{clean_channel}")]]
+        await update.message.reply_text(
+            f"⚠️ عذراً عزيزي، لا يمكنك استخدام البوت حتى تشترك في القناة التالية:\n{force_channel}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
 
-# ==========================================
-# 🔘 معالجة الأزرار (استجابة مضمونة وفورية)
-# ==========================================
+    await update.message.reply_text(f"{start_message_custom}\n\n👤 المطور: {developer_info}\nأرسل رسالتك وسوف تصل للإدارة.")
 
-async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 🔄 الضغط على الأزرار من داخل التليجرام
+async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    try:
-        await query.answer()
-    except Exception:
-        pass
-    
-    user_id = query.from_user.id
+    await query.answer()
     data = query.data
 
-    # 1. زر إنشاء تصويت جديد
-    if data == "btn_create_poll":
-        if user_id not in user_sessions:
-            user_sessions[user_id] = {}
-        user_sessions[user_id]["state"] = "waiting_title"
-        await query.edit_message_text(
-            "📝 <b>أرسل لي الآن اسم المسابقة أو صاحب التصويت:</b>",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إلغاء", callback_data="btn_back_main")]]),
-            parse_mode="HTML"
-        )
-        return
+    back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="back_admin")]])
 
-    # 2. زر اختيار الإيموجي والتفاعل (شاشة التفاعلات المتاحة)
-    if data == "btn_reaction":
-        current_emoji = user_sessions.get(user_id, {}).get("emoji", "❤️")
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("❤️", callback_data="set_emoji_❤️"),
-                InlineKeyboardButton("🔥", callback_data="set_emoji_🔥"),
-                InlineKeyboardButton("👍", callback_data="set_emoji_👍"),
-                InlineKeyboardButton("👏", callback_data="set_emoji_👏")
-            ],
-            [
-                InlineKeyboardButton("⭐", callback_data="set_emoji_⭐"),
-                InlineKeyboardButton("🎉", callback_data="set_emoji_🎉"),
-                InlineKeyboardButton("💎", callback_data="set_emoji_💎")
-            ],
-            [InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]
-        ])
-        await query.edit_message_text(
-            f"⚪ <b>اختيار زر التفاعل الخاص بك:</b>\n\nالإيموجي المحدد حالياً: {current_emoji}\nاختر الإيموجي الذي تريد استخدامه في تصويتك القادم:",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-        return
-
-    # تحديد الإيموجي
-    if data.startswith("set_emoji_"):
-        selected_emoji = data.replace("set_emoji_", "")
-        if user_id not in user_sessions:
-            user_sessions[user_id] = {}
-        user_sessions[user_id]["emoji"] = selected_emoji
-        
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("❤️", callback_data="set_emoji_❤️"),
-                InlineKeyboardButton("🔥", callback_data="set_emoji_🔥"),
-                InlineKeyboardButton("👍", callback_data="set_emoji_👍"),
-                InlineKeyboardButton("👏", callback_data="set_emoji_👏")
-            ],
-            [
-                InlineKeyboardButton("⭐", callback_data="set_emoji_⭐"),
-                InlineKeyboardButton("🎉", callback_data="set_emoji_🎉"),
-                InlineKeyboardButton("💎", callback_data="set_emoji_💎")
-            ],
-            [InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]
-        ])
-        await query.edit_message_text(
-            f"✅ تم تحديد {selected_emoji}\n\n⚪ <b>اختيار زر التفاعل الخاص بك:</b>\n\nالإيموجي المحدد حالياً: {selected_emoji}\nاختر الإيموجي الذي تريد استخدامه في تصويتك القادم:",
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-        return
-
-    # 3. زر الاشتراك الإجباري
-    if data == "btn_force_sub":
-        status_str = "مفعل 🟢" if force_sub_config["enabled"] else "معطل 🔴"
+    if data == "stats":
+        real_users = len(user_ids)
+        total_users = real_users + fake_users_count
         text = (
-            f"📢 <b>إعدادات الاشتراك الإجباري:</b>\n\n"
-            f"• الحالة: {status_str}\n"
-            f"• القناة: {force_sub_config['username']}\n"
-            f"• الرابط: {force_sub_config['url']}\n"
+            f"📊 <b>إحصائيات البوت:</b>\n\n"
+            f"• الأعضاء الحقيقيين: <code>{real_users}</code>\n"
+            f"• الأعضاء الوهميين: <code>{fake_users_count}</code>\n"
+            f"• الإجمالي الظاهر: <code>{total_users}</code>"
         )
-        keyboard = []
-        if is_admin(user_id):
-            toggle_text = "❌ تعطيل الاشتراك" if force_sub_config["enabled"] else "✅ تفعيل الاشتراك"
-            keyboard.append([InlineKeyboardButton(toggle_text, callback_data="toggle_force_sub")])
-        keyboard.append([InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")])
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        return
+        await query.edit_message_text(text, reply_markup=back_btn, parse_mode="HTML")
 
-    # 4. زر المركز الإداري
-    if data == "btn_admin_center":
-        if not is_admin(user_id):
-            return
-        admin_text = (
-            f"🌐 <b>المركز الإداري للمطور</b>\n\n"
-            f"• أيدي الأدمن: <code>{ADMIN_ID}</code>\n"
-            f"• عدد التصويتات المنشأة: <code>{len(polls_db)}</code>\n"
-            f"• حالة الاشتراك: <code>{'مفعل' if force_sub_config['enabled'] else 'معطل'}</code>"
-        )
+    elif data == "change_dev":
+        await query.edit_message_text(f"👤 المطور الحالي: {developer_info}\n\nأرسل معرف المطور الجديد من الشات (مثال: @username):", reply_markup=back_btn)
+        return SET_DEV
+
+    elif data == "change_start":
+        await query.edit_message_text(f"📝 الكليشة الحالية:\n{start_message_custom}\n\nأرسل الكليشة الجديدة من الشات:", reply_markup=back_btn)
+        return SET_START
+
+    elif data == "force_sub":
+        status = force_channel if force_channel else "غير مفعّل"
         await query.edit_message_text(
-            admin_text,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]]),
-            parse_mode="HTML"
+            f"⚙️ الاشتراك الإجباري الحالي: {status}\n\n"
+            f"📢 أرسل معرف القناة الآن في الشات (مثال: @myChannel)\n"
+            f"أو أرسل الرقم 0 لإلغاء الاشتراك الإجباري:", 
+            reply_markup=back_btn
         )
-        return
+        return SET_FORCE_SUB
 
-    # 5. زر العودة للرئيسية
-    if data == "btn_back_main":
-        if user_id in user_sessions and "state" in user_sessions[user_id]:
-            del user_sessions[user_id]["state"]
-        await query.edit_message_text(
-            "أهلاً بك في بوت إنشاء التصويت! اختر من القائمة أدناه:",
-            reply_markup=get_main_keyboard()
-        )
-        return
+    elif data == "fake_sub":
+        await query.edit_message_text(f"⚙️ العدد الوهمي الحالي: {fake_users_count}\n\nأرسل الرقم الجديد لإضافته للإحصائيات:", reply_markup=back_btn)
+        return SET_FAKE_SUB
 
-    # 6. تبديل حالة الاشتراك الإجباري
-    if data == "toggle_force_sub" and is_admin(user_id):
-        force_sub_config["enabled"] = not force_sub_config["enabled"]
-        status_str = "مفعل 🟢" if force_sub_config["enabled"] else "معطل 🔴"
-        text = (
-            f"📢 <b>إعدادات الاشتراك الإجباري:</b>\n\n"
-            f"• الحالة: {status_str}\n"
-            f"• القناة: {force_sub_config['username']}\n"
-            f"• الرابط: {force_sub_config['url']}\n"
-        )
-        toggle_text = "❌ تعطيل الاشتراك" if force_sub_config["enabled"] else "✅ تفعيل الاشتراك"
-        keyboard = [
-            [InlineKeyboardButton(toggle_text, callback_data="toggle_force_sub")],
-            [InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        return
+    elif data == "broadcast":
+        await query.edit_message_text("📢 قم بإرسال أو توجيه أي رسالة في الشات الآن لإذاعتها لجميع الأعضاء:", reply_markup=back_btn)
+        return BROADCAST
 
-    # 7. تسجيل التصويت
-    if data.startswith("vote_"):
-        await handle_vote_action(query, context)
+    elif data == "back_admin":
+        text = f"• اهلاً بك في لوحة الادمن\n\n{start_message_custom}"
+        await query.edit_message_text(text, reply_markup=get_admin_keyboard())
+        return ConversationHandler.END
 
-# ==========================================
-# 📝 استلام النصوص وإنشاء التصويت
-# ==========================================
+# 📝 استقبال الأوامر والنصوص مباشرة من الشات
+async def save_dev(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global developer_info
+    developer_info = update.message.text
+    await update.message.reply_text(f"✅ تم تغيير المطور إلى: {developer_info}", reply_markup=get_admin_keyboard())
+    return ConversationHandler.END
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text: return
-    user_id = update.effective_user.id
+async def save_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global start_message_custom
+    start_message_custom = update.message.text
+    await update.message.reply_text("✅ تم تحديث كليشة /start بنجاح!", reply_markup=get_admin_keyboard())
+    return ConversationHandler.END
 
-    if force_sub_config["enabled"] and not await is_user_subscribed(user_id, context):
-        msg = (
-            f"🚸| عذراً عزيزي\n"
-            f"🔰| عليك الاشتراك بقناة البوت لتتمكن من استخدامه\n\n"
-            f"- {force_sub_config['url']}\n\n"
-            f"‼️| اشترك ثم ارسل /start"
-        )
-        await update.message.reply_text(msg, disable_web_page_preview=True)
-        return
-
+async def save_force_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global force_channel
     text = update.message.text.strip()
-    user_emoji = user_sessions.get(user_id, {}).get("emoji", "❤️")
+    if text == "0":
+        force_channel = ""
+        await update.message.reply_text("✅ تم إلغاء الاشتراك الإجباري.", reply_markup=get_admin_keyboard())
+    else:
+        force_channel = text if text.startswith("@") else f"@{text}"
+        await update.message.reply_text(f"✅ تم تعيين القناة {force_channel} للاشتراك الإجباري بنجاح!\n\n⚠️ تأكد من رفع البوت أدمن داخل القناة.", reply_markup=get_admin_keyboard())
+    return ConversationHandler.END
 
-    poll_id = f"{user_id}{int(update.message.date.timestamp())}"
-    polls_db[poll_id] = {
-        "title": text,
-        "emoji": user_emoji,
-        "votes": set()
-    }
+async def save_fake_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global fake_users_count
+    if update.message.text.isdigit():
+        fake_users_count = int(update.message.text)
+        await update.message.reply_text(f"✅ تم تحديث العدد الوهمي إلى: {fake_users_count}", reply_markup=get_admin_keyboard())
+    else:
+        await update.message.reply_text("❌ أرسل أرقاماً فقط!")
+    return ConversationHandler.END
 
-    bot_username = (await context.bot.get_me()).username
-    inline_code = f"@{bot_username} {poll_id}"
+async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    success, failed = 0, 0
+    await msg.reply_text("⏳ جاري بدء الإذاعة...")
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("• اضغط هنا للمشاركة •", switch_inline_query=poll_id)]
-    ])
+    for u_id in list(user_ids):
+        try:
+            await msg.forward(chat_id=u_id)
+            success += 1
+        except Exception:
+            failed += 1
 
-    reply_msg = f"<b>{text}</b>\n\n• <code>{inline_code}</code>"
-    await update.message.reply_text(reply_msg, reply_markup=keyboard, parse_mode="HTML")
+    await msg.reply_text(
+        f"✅ <b>تمت الإذاعة!</b>\n\n• تم الإرسال لـ: {success}\n• المحظورين: {failed}",
+        reply_markup=get_admin_keyboard(),
+        parse_mode="HTML"
+    )
+    return ConversationHandler.END
 
-# ==========================================
-# 🔗 Inline Query للمشاركة
-# ==========================================
+# 📩 توجيه رسائل التواصل
+async def forward_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        user_ids.add(user.id)
+        if await check_subscription(user.id, context):
+            await update.message.forward(chat_id=ADMIN_ID)
+            await update.message.reply_text("✅ تم إرسال رسالتك إلى الإدارة.")
 
-async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.inline_query.query.strip()
-    
-    if query in polls_db:
-        poll_data = polls_db[query]
-        title = poll_data["title"]
-        emoji = poll_data.get("emoji", "❤️")
-        vote_count = len(poll_data["votes"])
-        bot_username = (await context.bot.get_me()).username
-        
-        content = InputTextMessageContent(
-            message_text=f"📊 <b>التصويت لصالح:</b> {title}\n\n{emoji} عدد الأصوات: {vote_count}",
-            parse_mode="HTML"
-        )
-        
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"{emoji} تصويت ({vote_count})", callback_data=f"vote_{query}")],
-            [InlineKeyboardButton("اضغط هنا للدخول الى البوت !", url=f"https://t.me/{bot_username}")]
-        ])
-
-        results = [
-            InlineQueryResultArticle(
-                id=str(uuid.uuid4()),
-                title="اضغط هنا للارسال .",
-                description=f"مشاركة تصويت: {title}",
-                input_message_content=content,
-                reply_markup=keyboard
-            )
-        ]
-        await update.inline_query.answer(results, cache_time=1)
-
-# ==========================================
-# ❤️ تسجيل الصوت والتحقق من القناة
-# ==========================================
-
-async def handle_vote_action(query, context):
-    user_id = query.from_user.id
-    
-    if force_sub_config["enabled"] and not await is_user_subscribed(user_id, context):
-        return
-
-    poll_id = query.data.replace("vote_", "")
-    if poll_id in polls_db:
-        poll = polls_db[poll_id]
-        if user_id not in poll["votes"]:
-            poll["votes"].add(user_id)
-            vote_count = len(poll["votes"])
-            emoji = poll.get("emoji", "❤️")
-            bot_username = (await context.bot.get_me()).username
-            
-            new_keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"{emoji} تصويت ({vote_count})", callback_data=f"vote_{poll_id}")],
-                [InlineKeyboardButton("اضغط هنا للدخول الى البوت !", url=f"https://t.me/{bot_username}")]
-            ])
-            
-            await query.edit_message_text(
-                text=f"📊 <b>التصويت لصالح:</b> {poll['title']}\n\n{emoji} عدد الأصوات: {vote_count}",
-                reply_markup=new_keyboard,
-                parse_mode="HTML"
-            )
-
-# ==========================================
-# 🚀 تشغيل البوت
-# ==========================================
 if __name__ == '__main__':
-    bot_app = ApplicationBuilder().token(TOKEN).build()
-    
-    bot_app.add_handler(CallbackQueryHandler(handle_buttons))
-    bot_app.add_handler(CommandHandler("start", start))
-    bot_app.add_handler(InlineQueryHandler(inline_query_handler))
-    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
-    print("البوت يعمل...")
-    bot_app.run_polling()
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_buttons)],
+        states={
+            SET_DEV: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_dev)],
+            SET_START: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_start)],
+            SET_FORCE_SUB: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_force_sub)],
+            SET_FAKE_SUB: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_fake_sub)],
+            BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, do_broadcast)],
+        },
+        fallbacks=[CallbackQueryHandler(admin_buttons, pattern="^back_admin$")]
+    )
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(conv_handler)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_messages))
+
+    print("جاري تشغيل البوت...")
+    app.run_polling()
+
+
