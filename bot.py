@@ -121,13 +121,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ==========================================
-# 🔘 معالجة الأزرار (سريعة واستجابة فورية)
+# 🔘 معالجة الأزرار (استجابة مضمونة وفورية)
 # ==========================================
 
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    # الإجابة الفورية لمنع تعليق الزر في تليجرام
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        pass
     
     user_id = query.from_user.id
     data = query.data
@@ -138,13 +140,13 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_sessions[user_id] = {}
         user_sessions[user_id]["state"] = "waiting_title"
         await query.edit_message_text(
-            "📝 **أرسل لي الآن اسم المسابقة أو صاحب التصويت:**",
+            "📝 <b>أرسل لي الآن اسم المسابقة أو صاحب التصويت:</b>",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 إلغاء", callback_data="btn_back_main")]]),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
 
-    # 2. زر اختيار الإيموجي والتفاعل
+    # 2. زر اختيار الإيموجي والتفاعل (شاشة التفاعلات المتاحة)
     if data == "btn_reaction":
         current_emoji = user_sessions.get(user_id, {}).get("emoji", "❤️")
         keyboard = InlineKeyboardMarkup([
@@ -162,9 +164,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]
         ])
         await query.edit_message_text(
-            f"⚪ **اختيار زر التفاعل الخاص بك:**\n\nالإيموجي المحدد حالياً: {current_emoji}\nاختر الإيموجي الذي تريد استخدامه في تصويتك القادم:",
+            f"⚪ <b>اختيار زر التفاعل الخاص بك:</b>\n\nالإيموجي المحدد حالياً: {current_emoji}\nاختر الإيموجي الذي تريد استخدامه في تصويتك القادم:",
             reply_markup=keyboard,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
 
@@ -190,9 +192,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]
         ])
         await query.edit_message_text(
-            f"✅ تم تحديد {selected_emoji}\n\n⚪ **اختيار زر التفاعل الخاص بك:**\n\nالإيموجي المحدد حالياً: {selected_emoji}\nاختر الإيموجي الذي تريد استخدامه في تصويتك القادم:",
+            f"✅ تم تحديد {selected_emoji}\n\n⚪ <b>اختيار زر التفاعل الخاص بك:</b>\n\nالإيموجي المحدد حالياً: {selected_emoji}\nاختر الإيموجي الذي تريد استخدامه في تصويتك القادم:",
             reply_markup=keyboard,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
 
@@ -200,7 +202,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "btn_force_sub":
         status_str = "مفعل 🟢" if force_sub_config["enabled"] else "معطل 🔴"
         text = (
-            f"📢 **إعدادات الاشتراك الإجباري:**\n\n"
+            f"📢 <b>إعدادات الاشتراك الإجباري:</b>\n\n"
             f"• الحالة: {status_str}\n"
             f"• القناة: {force_sub_config['username']}\n"
             f"• الرابط: {force_sub_config['url']}\n"
@@ -210,7 +212,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             toggle_text = "❌ تعطيل الاشتراك" if force_sub_config["enabled"] else "✅ تفعيل الاشتراك"
             keyboard.append([InlineKeyboardButton(toggle_text, callback_data="toggle_force_sub")])
         keyboard.append([InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")])
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return
 
     # 4. زر المركز الإداري
@@ -218,15 +220,15 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_admin(user_id):
             return
         admin_text = (
-            f"🌐 **المركز الإداري للمطور**\n\n"
-            f"• أيدي الأدمن: `{ADMIN_ID}`\n"
-            f"• عدد التصويتات المنشأة: `{len(polls_db)}`\n"
-            f"• حالة الاشتراك: `{'مفعل' if force_sub_config['enabled'] else 'معطل'}`"
+            f"🌐 <b>المركز الإداري للمطور</b>\n\n"
+            f"• أيدي الأدمن: <code>{ADMIN_ID}</code>\n"
+            f"• عدد التصويتات المنشأة: <code>{len(polls_db)}</code>\n"
+            f"• حالة الاشتراك: <code>{'مفعل' if force_sub_config['enabled'] else 'معطل'}</code>"
         )
         await query.edit_message_text(
             admin_text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]]),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
 
@@ -245,7 +247,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         force_sub_config["enabled"] = not force_sub_config["enabled"]
         status_str = "مفعل 🟢" if force_sub_config["enabled"] else "معطل 🔴"
         text = (
-            f"📢 **إعدادات الاشتراك الإجباري:**\n\n"
+            f"📢 <b>إعدادات الاشتراك الإجباري:</b>\n\n"
             f"• الحالة: {status_str}\n"
             f"• القناة: {force_sub_config['username']}\n"
             f"• الرابط: {force_sub_config['url']}\n"
@@ -255,7 +257,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(toggle_text, callback_data="toggle_force_sub")],
             [InlineKeyboardButton("🔙 عودة", callback_data="btn_back_main")]
         ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return
 
     # 7. تسجيل التصويت
@@ -315,8 +317,8 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         bot_username = (await context.bot.get_me()).username
         
         content = InputTextMessageContent(
-            message_text=f"📊 **التصويت لصالح:** {title}\n\n{emoji} عدد الأصوات: {vote_count}",
-            parse_mode="Markdown"
+            message_text=f"📊 <b>التصويت لصالح:</b> {title}\n\n{emoji} عدد الأصوات: {vote_count}",
+            parse_mode="HTML"
         )
         
         keyboard = InlineKeyboardMarkup([
@@ -360,18 +362,17 @@ async def handle_vote_action(query, context):
             ])
             
             await query.edit_message_text(
-                text=f"📊 **التصويت لصالح:** {poll['title']}\n\n{emoji} عدد الأصوات: {vote_count}",
+                text=f"📊 <b>التصويت لصالح:</b> {poll['title']}\n\n{emoji} عدد الأصوات: {vote_count}",
                 reply_markup=new_keyboard,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
 
 # ==========================================
-# 🚀 تشغيل البوت (ترتيب الأوامر الصحيح للأزرار)
+# 🚀 تشغيل البوت
 # ==========================================
 if __name__ == '__main__':
     bot_app = ApplicationBuilder().token(TOKEN).build()
     
-    # وضع CallbackQueryHandler في البداية لضمان سرعة الاستجابة للضغطات
     bot_app.add_handler(CallbackQueryHandler(handle_buttons))
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(InlineQueryHandler(inline_query_handler))
